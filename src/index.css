@@ -1,0 +1,26 @@
+:root {
+  --bp-bg: #0a2540;
+  --bp-bg-deep: #061a2e;
+  --bp-line: #1d4e7a;
+  --bp-line-soft: #15395c;
+  --bp-ink: #cfe6ff;
+  --bp-accent: #2ea3ff;
+  --bp-accent-soft: #66c0ff;
+  --bp-warn: #ff5d73;
+  --bp-grid: rgba(110, 170, 230, 0.10);
+  font-family: 'Consolas', 'SF Mono', 'Roboto Mono', ui-monospace, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  background: var(--bp-bg-deep);
+  color: var(--bp-ink);
+}

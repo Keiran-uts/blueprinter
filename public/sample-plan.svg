@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11400 9100" width="1140" height="910">
+  <rect x="0" y="0" width="11400" height="9100" fill="#ffffff"/>
+  <!-- outer walls (double line, 200 thick) -->
+  <g stroke="#0a6b3a" stroke-width="20" fill="none">
+    <rect x="0" y="0" width="11400" height="9100"/>
+    <rect x="200" y="200" width="11000" height="8700"/>
+    <!-- internal vertical walls -->
+    <line x1="5100" y1="200" x2="5100" y2="8900"/>
+    <line x1="5300" y1="200" x2="5300" y2="8900"/>
+    <line x1="7800" y1="200" x2="7800" y2="4600"/>
+    <line x1="8000" y1="200" x2="8000" y2="4600"/>
+    <!-- internal horizontal walls -->
+    <line x1="200" y1="4600" x2="11200" y2="4600"/>
+    <line x1="200" y1="4800" x2="11200" y2="4800"/>
+    <line x1="5300" y1="6100" x2="11200" y2="6100"/>
+    <line x1="5300" y1="6300" x2="11200" y2="6300"/>
+  </g>
+  <!-- furniture / noise that should NOT be detected as walls -->
+  <g stroke="#888" stroke-width="8" fill="none">
+    <circle cx="1500" cy="1500" r="400"/>
+    <rect x="6200" y="1000" width="900" height="600"/>
+    <line x1="9000" y1="7000" x2="9600" y2="7600"/>
+  </g>
+  <text x="2400" y="2600" font-family="sans-serif" font-size="300" fill="#0a6b3a">BED #1</text>
+  <text x="8800" y="2600" font-family="sans-serif" font-size="300" fill="#0a6b3a">BED #2</text>
+  <text x="8400" y="7400" font-family="sans-serif" font-size="300" fill="#0a6b3a">BED #3</text>
+</svg>
