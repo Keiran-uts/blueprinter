@@ -1,24 +1,24 @@
 import { useRef, useState } from 'react';
+import { viewBoxFor, northMarkup, titleBlockMarkup, formatLength } from '../lib/annotations';
 
 const BLUE = '#2ea3ff';
-const fmt = (mm) => Math.round(mm).toLocaleString('en-US');
 
 /** Renders the uploaded plan with the blue dimension overlay. In "measure"
  *  mode the user clicks two points to add a manual measurement. Wall lines can
  *  be toggled on/off to confirm the auto-detection. */
 export default function PlanViewer({
   planInner, box, hWalls, vWalls, dims, mmPerUnit,
-  manual, mode, north, onToggleWall, onAddManual,
+  manual, mode, north, calibSeg, titleBlock, showInterior, unit, onToggleWall, onAddManual,
 }) {
+  const fmt = (mm) => formatLength(mm, unit);
   const svgRef = useRef(null);
   const [pending, setPending] = useState(null); // first clicked point in measure mode
 
-  const pad = Math.max(box.w, box.h) * 0.09;
   const off = Math.max(box.w, box.h) * 0.04;
   const tick = off * 0.18;
   const fs = Math.max(box.w, box.h) * 0.018;
   const sw = Math.max(box.w, box.h) * 0.0016;
-  const vb = `${box.x - pad} ${box.y - pad} ${box.w + pad * 2} ${box.h + pad * 2}`;
+  const vb = viewBoxFor(box).vb;
   const topY = box.y - off;
   const leftX = box.x - off;
 
@@ -102,6 +102,33 @@ export default function PlanViewer({
         );
       })}
 
+      {/* interior dimensions — drawn inside the building between the walls */}
+      {showInterior && dims.map((d, i) => {
+        const mm = d.units * mmPerUnit;
+        if (d.cross == null) return null;
+        if (d.axis === 'h') {
+          return (
+            <g key={`i${i}`} stroke={BLUE} fill={BLUE} opacity="0.85">
+              <line x1={d.from} y1={d.cross} x2={d.to} y2={d.cross} strokeWidth={sw} />
+              <line x1={d.from} y1={d.cross - tick} x2={d.from} y2={d.cross + tick} strokeWidth={sw} />
+              <line x1={d.to} y1={d.cross - tick} x2={d.to} y2={d.cross + tick} strokeWidth={sw} />
+              <text x={(d.from + d.to) / 2} y={d.cross - tick * 0.6} fontSize={fs} textAnchor="middle"
+                fontFamily="Consolas, monospace" stroke="none">{fmt(mm)}</text>
+            </g>
+          );
+        }
+        return (
+          <g key={`i${i}`} stroke={BLUE} fill={BLUE} opacity="0.85">
+            <line x1={d.cross} y1={d.from} x2={d.cross} y2={d.to} strokeWidth={sw} />
+            <line x1={d.cross - tick} y1={d.from} x2={d.cross + tick} y2={d.from} strokeWidth={sw} />
+            <line x1={d.cross - tick} y1={d.to} x2={d.cross + tick} y2={d.to} strokeWidth={sw} />
+            <text x={d.cross - tick * 0.6} y={(d.from + d.to) / 2} fontSize={fs} textAnchor="middle"
+              fontFamily="Consolas, monospace" stroke="none"
+              transform={`rotate(-90 ${d.cross - tick * 0.6} ${(d.from + d.to) / 2})`}>{fmt(mm)}</text>
+          </g>
+        );
+      })}
+
       {/* manual measurements */}
       {manual.map((m, i) => {
         const mm = Math.hypot(m.x2 - m.x1, m.y2 - m.y1) * mmPerUnit;
@@ -116,7 +143,17 @@ export default function PlanViewer({
         );
       })}
 
+      {/* calibration line awaiting its real length */}
+      {calibSeg && (
+        <line x1={calibSeg.x1} y1={calibSeg.y1} x2={calibSeg.x2} y2={calibSeg.y2}
+          stroke="#ffd23f" strokeWidth={sw * 2} strokeDasharray={`${tick} ${tick * 0.6}`} />
+      )}
+
       {pending && <circle cx={pending.x} cy={pending.y} r={sw * 3} fill="none" stroke={BLUE} strokeWidth={sw} />}
+
+      {/* north point + title block (shared builders, identical to export) */}
+      <g dangerouslySetInnerHTML={{ __html: northMarkup(box, north?.angle ?? 0) }} />
+      <g dangerouslySetInnerHTML={{ __html: titleBlockMarkup(box, titleBlock || {}) }} />
     </svg>
   );
 }

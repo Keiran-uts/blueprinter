@@ -11,5 +11,12 @@ export default defineConfig({
       strict: false,
       allow: ['..', '.'],
     },
+    watch: {
+      // The preview launcher runs Vite from a Windows 8.3 short path, which
+      // crashes libuv's native fs-event watcher (path prefix mismatch).
+      // Polling sidesteps the native watcher entirely.
+      usePolling: true,
+      interval: 200,
+    },
   },
 })

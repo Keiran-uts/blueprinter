@@ -207,19 +207,37 @@ export function detectWalls(segments, box, opts = {}) {
   return { hWalls, vWalls, box };
 }
 
-/** Build dimension chains between consecutive enabled wall lines. */
+// Midpoint of the overlap of two [min,max] ranges; falls back to the midpoint
+// of the first range when they don't overlap.
+function overlapMid(aMin, aMax, bMin, bMax) {
+  const lo = Math.max(aMin, bMin);
+  const hi = Math.min(aMax, bMax);
+  return lo <= hi ? (lo + hi) / 2 : (aMin + aMax) / 2;
+}
+
+/** Build dimension chains between consecutive enabled wall lines. Each dim also
+ *  carries a `cross` coordinate marking where it sits *inside* the plan, used
+ *  for the optional interior dimensions. */
 export function buildDimensions(hWalls, vWalls) {
   const h = hWalls.filter((w) => w.enabled).sort((a, b) => a.pos - b.pos);
   const v = vWalls.filter((w) => w.enabled).sort((a, b) => a.pos - b.pos);
   const dims = [];
 
-  // vertical dims (gaps between horizontal walls) — drawn down the left
+  // vertical dims (gaps between horizontal walls) — outer chain down the left;
+  // interior line at the mid-x of where the two walls overlap.
   for (let i = 0; i + 1 < h.length; i++) {
-    dims.push({ axis: 'v', from: h[i].pos, to: h[i + 1].pos, units: h[i + 1].pos - h[i].pos });
+    dims.push({
+      axis: 'v', from: h[i].pos, to: h[i + 1].pos, units: h[i + 1].pos - h[i].pos,
+      cross: overlapMid(h[i].min, h[i].max, h[i + 1].min, h[i + 1].max),
+    });
   }
-  // horizontal dims (gaps between vertical walls) — drawn across the top
+  // horizontal dims (gaps between vertical walls) — outer chain across the top;
+  // interior line at the mid-y of where the two walls overlap.
   for (let i = 0; i + 1 < v.length; i++) {
-    dims.push({ axis: 'h', from: v[i].pos, to: v[i + 1].pos, units: v[i + 1].pos - v[i].pos });
+    dims.push({
+      axis: 'h', from: v[i].pos, to: v[i + 1].pos, units: v[i + 1].pos - v[i].pos,
+      cross: overlapMid(v[i].min, v[i].max, v[i + 1].min, v[i + 1].max),
+    });
   }
   return dims;
 }

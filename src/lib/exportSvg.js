@@ -1,21 +1,14 @@
-// exportSvg.js — serialise the original SVG plus a blue annotation overlay.
+// exportSvg.js — serialise the original SVG plus a blue annotation overlay
+// (dimension chains, manual measurements, north point and title block).
+
+import { metrics, viewBoxFor, northMarkup, titleBlockMarkup, formatLength } from './annotations';
 
 const BLUE = '#2ea3ff';
 
-function fmt(mm) {
-  const v = Math.round(mm);
-  return v.toLocaleString('en-US');
-}
-
-/**
- * Produce annotation SVG markup (a single <g>) for the given dimensions,
- * manual measurements and north compass. Returns a string of SVG children.
- */
-export function buildAnnotationGroup({ dims, manual, mmPerUnit, box, north }) {
-  const off = Math.max(box.w, box.h) * 0.04; // offset of dimension chains from the plan
-  const tick = off * 0.18;
-  const fs = Math.max(box.w, box.h) * 0.018;
-  const sw = Math.max(box.w, box.h) * 0.0016;
+/** Dimension chains + manual measurements as an SVG-string group. */
+function buildDimGroup({ dims, manual, mmPerUnit, box, showInterior, unit }) {
+  const fmt = (mm) => formatLength(mm, unit);
+  const { off, tick, fs, sw } = metrics(box);
   const parts = [];
 
   const line = (x1, y1, x2, y2, w = sw) =>
@@ -41,47 +34,53 @@ export function buildAnnotationGroup({ dims, manual, mmPerUnit, box, north }) {
     }
   }
 
-  for (const m of manual) {
-    const mm = Math.hypot(m.x2 - m.x1, m.y2 - m.y1) * mmPerUnit;
-    parts.push(line(m.x1, m.y1, m.x2, m.y2));
-    const a = Math.atan2(m.y2 - m.y1, m.x2 - m.x1);
+  if (showInterior) {
+    for (const d of dims) {
+      if (d.cross == null) continue;
+      const mm = d.units * mmPerUnit;
+      if (d.axis === 'h') {
+        parts.push(line(d.from, d.cross, d.to, d.cross));
+        parts.push(line(d.from, d.cross - tick, d.from, d.cross + tick));
+        parts.push(line(d.to, d.cross - tick, d.to, d.cross + tick));
+        parts.push(text((d.from + d.to) / 2, d.cross - tick * 0.6, fmt(mm)));
+      } else {
+        parts.push(line(d.cross, d.from, d.cross, d.to));
+        parts.push(line(d.cross - tick, d.from, d.cross + tick, d.from));
+        parts.push(line(d.cross - tick, d.to, d.cross + tick, d.to));
+        parts.push(text(d.cross - tick * 0.6, (d.from + d.to) / 2, fmt(mm), 'middle', -90));
+      }
+    }
+  }
+
+  for (const mseg of manual) {
+    const mm = Math.hypot(mseg.x2 - mseg.x1, mseg.y2 - mseg.y1) * mmPerUnit;
+    parts.push(line(mseg.x1, mseg.y1, mseg.x2, mseg.y2));
+    const a = Math.atan2(mseg.y2 - mseg.y1, mseg.x2 - mseg.x1);
     const nx = Math.sin(a) * tick;
     const ny = -Math.cos(a) * tick;
-    parts.push(line(m.x1 + nx, m.y1 + ny, m.x1 - nx, m.y1 - ny));
-    parts.push(line(m.x2 + nx, m.y2 + ny, m.x2 - nx, m.y2 - ny));
-    parts.push(text((m.x1 + m.x2) / 2 + nx * 1.6, (m.y1 + m.y2) / 2 + ny * 1.6, fmt(mm)));
+    parts.push(line(mseg.x1 + nx, mseg.y1 + ny, mseg.x1 - nx, mseg.y1 - ny));
+    parts.push(line(mseg.x2 + nx, mseg.y2 + ny, mseg.x2 - nx, mseg.y2 - ny));
+    parts.push(text((mseg.x1 + mseg.x2) / 2 + nx * 1.6, (mseg.y1 + mseg.y2) / 2 + ny * 1.6, fmt(mm)));
   }
 
-  // North compass, placed top-right of the plan box
-  if (north) {
-    const r = off * 0.9;
-    const cx = box.x + box.w - r;
-    const cy = box.y - off + r * 0.2;
-    const rad = ((north.angle - 90) * Math.PI) / 180;
-    const ex = cx + Math.cos(rad) * r;
-    const ey = cy + Math.sin(rad) * r;
-    parts.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="none" stroke="${BLUE}" stroke-width="${sw}"/>`);
-    parts.push(line(cx, cy, ex, ey, sw * 1.6));
-    parts.push(text(ex, ey - tick * 0.5, 'N'));
-  }
-
-  return `<g id="blueprinter-annotations">${parts.join('')}</g>`;
+  return `<g id="bp-dimensions">${parts.join('')}</g>`;
 }
 
-/** Inject the annotation group into the original SVG and expand the viewBox so
- *  the dimension chains aren't clipped. Returns a complete SVG string. */
-export function exportAnnotatedSvg({ svg, box, dims, manual, mmPerUnit, north }) {
+/** Inject all annotations into the original SVG and expand the viewBox. */
+export function exportAnnotatedSvg({ svg, box, dims, manual, mmPerUnit, north, titleBlock, showInterior, unit }) {
   const clone = svg.cloneNode(true);
-  clone.querySelectorAll('#blueprinter-annotations').forEach((n) => n.remove());
+  clone.querySelectorAll('#bp-dimensions, #bp-north, #bp-title-block').forEach((n) => n.remove());
 
-  const pad = Math.max(box.w, box.h) * 0.09;
-  const nb = { x: box.x - pad, y: box.y - pad, w: box.w + pad * 2, h: box.h + pad * 2 };
-  clone.setAttribute('viewBox', `${nb.x} ${nb.y} ${nb.w} ${nb.h}`);
+  const { vb } = viewBoxFor(box);
+  clone.setAttribute('viewBox', vb);
   clone.removeAttribute('width');
   clone.removeAttribute('height');
 
-  const group = buildAnnotationGroup({ dims, manual, mmPerUnit, box, north });
+  const overlay = buildDimGroup({ dims, manual, mmPerUnit, box, showInterior, unit })
+    + northMarkup(box, north?.angle ?? 0)
+    + titleBlockMarkup(box, titleBlock || {});
+
   let xml = new XMLSerializer().serializeToString(clone);
-  xml = xml.replace(/<\/svg>\s*$/, `${group}</svg>`);
+  xml = xml.replace(/<\/svg>\s*$/, `${overlay}</svg>`);
   return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml;
 }
