@@ -68,7 +68,20 @@ export default function NorthCompass({ angle, onChange }) {
         <circle cx={nx} cy={ny} r={6} className="bp-fill" />
         <text x={nx} y={ny - 9} className="bp-label" textAnchor="middle">N</text>
       </svg>
-      <div className="compass-readout">{angle}&deg;</div>
+      <div className="compass-input">
+        <input
+          type="number"
+          min="0"
+          max="359"
+          value={angle}
+          onChange={(e) => {
+            const v = parseInt(e.target.value, 10);
+            if (Number.isFinite(v)) onChange(((v % 360) + 360) % 360);
+            else onChange(0);
+          }}
+        />
+        <span>&deg;</span>
+      </div>
     </div>
   );
 }

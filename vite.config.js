@@ -5,6 +5,9 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Honor the PORT env var the Claude preview launcher assigns (autoPort);
+    // fall back to a fixed port for plain `npm run dev`.
+    port: Number(process.env.PORT) || 5175,
     fs: {
       // Allow serving files regardless of how the root path was resolved
       // (the preview launcher may use a Windows 8.3 short path).

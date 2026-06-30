@@ -29,6 +29,34 @@ export function parseSvg(svgText) {
   return { doc, svg, box };
 }
 
+// CSS absolute length units → millimetres (px/unitless assumed at 96 dpi).
+const UNIT_MM = {
+  mm: 1, cm: 10, q: 0.25, in: 25.4, pt: 25.4 / 72, pc: 25.4 / 6,
+  px: 25.4 / 96, '': 25.4 / 96,
+};
+
+function lengthToMM(value) {
+  if (value == null) return null;
+  const m = String(value).trim().match(/^(-?[\d.]+)\s*([a-z]*)$/i);
+  if (!m) return null;
+  const num = parseFloat(m[1]);
+  const factor = UNIT_MM[(m[2] || '').toLowerCase()];
+  if (!Number.isFinite(num) || factor == null) return null;
+  return num * factor;
+}
+
+/**
+ * The drawing's true physical size in millimetres, read from the <svg>
+ * width/height attributes (which carry real units on CAD/PDF exports), or null
+ * if the file doesn't declare one. This is the accurate page size to scale from.
+ */
+export function physicalSizeMM(svg) {
+  const w = lengthToMM(svg.getAttribute('width'));
+  const h = lengthToMM(svg.getAttribute('height'));
+  if (w && h && w > 0 && h > 0) return { w, h };
+  return null;
+}
+
 /** Flatten the `d` attribute of a <path> into straight segments. Curves are
  *  approximated by their endpoints (walls are straight, so this is fine). */
 function pathSegments(d) {
@@ -141,20 +169,27 @@ export function extractSegments(svg) {
 
 const len = (s) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
 
-/** Cluster 1-D positions (weighted by segment length) into wall lines. */
+// Cluster 1-D positions (weighted by segment length) into wall lines. Both
+// faces of a thick wall fall into one cluster; posMin/posMax track those faces
+// so dimensions can be measured to the wall's outer face.
 function clusterAxis(items, tol) {
   const sorted = [...items].sort((a, b) => a.pos - b.pos);
   const clusters = [];
   for (const it of sorted) {
     const last = clusters[clusters.length - 1];
-    if (last && it.pos - last.pos <= tol) {
+    if (last && it.pos - last.posMax <= tol) {
       const w = last.weight + it.weight;
       last.pos = (last.pos * last.weight + it.pos * it.weight) / w;
       last.weight = w;
       last.min = Math.min(last.min, it.min);
       last.max = Math.max(last.max, it.max);
+      last.posMin = Math.min(last.posMin, it.pos);
+      last.posMax = Math.max(last.posMax, it.pos);
     } else {
-      clusters.push({ pos: it.pos, weight: it.weight, min: it.min, max: it.max });
+      clusters.push({
+        pos: it.pos, weight: it.weight, min: it.min, max: it.max,
+        posMin: it.pos, posMax: it.pos,
+      });
     }
   }
   return clusters;
@@ -168,7 +203,7 @@ function clusterAxis(items, tol) {
  */
 export function detectWalls(segments, box, opts = {}) {
   const angleTol = opts.angleTol ?? 8; // degrees off-axis still counts as ortho
-  const mergeFrac = opts.mergeFrac ?? 0.022; // wall-thickness merge band (folds both faces of a wall into one line)
+  const mergeFrac = opts.mergeFrac ?? 0.045; // wall-thickness merge band (folds both faces of a wall into one line)
   const keepFrac = opts.keepFrac ?? 0.28; // min coverage to count as structural
   const minLenFrac = opts.minLenFrac ?? 0.04; // ignore tiny segments (furniture/text)
 
@@ -199,10 +234,10 @@ export function detectWalls(segments, box, opts = {}) {
   let id = 0;
   const hWalls = hClusters
     .sort((a, b) => a.pos - b.pos)
-    .map((c) => ({ id: `h${id++}`, axis: 'h', pos: c.pos, min: c.min, max: c.max, enabled: true }));
+    .map((c) => ({ id: `h${id++}`, axis: 'h', pos: c.pos, min: c.min, max: c.max, posMin: c.posMin, posMax: c.posMax, enabled: true }));
   const vWalls = vClusters
     .sort((a, b) => a.pos - b.pos)
-    .map((c) => ({ id: `v${id++}`, axis: 'v', pos: c.pos, min: c.min, max: c.max, enabled: true }));
+    .map((c) => ({ id: `v${id++}`, axis: 'v', pos: c.pos, min: c.min, max: c.max, posMin: c.posMin, posMax: c.posMax, enabled: true }));
 
   return { hWalls, vWalls, box };
 }
@@ -215,29 +250,34 @@ function overlapMid(aMin, aMax, bMin, bMax) {
   return lo <= hi ? (lo + hi) / 2 : (aMin + aMax) / 2;
 }
 
-/** Build dimension chains between consecutive enabled wall lines. Each dim also
- *  carries a `cross` coordinate marking where it sits *inside* the plan, used
- *  for the optional interior dimensions. */
+// The position a wall contributes as a chain boundary: the outermost wall on
+// each side uses its outer face (so the overall dimension spans face-to-face);
+// interior walls use their centreline.
+function boundary(arr, i) {
+  if (i === 0) return arr[0].posMin;
+  if (i === arr.length - 1) return arr[i].posMax;
+  return arr[i].pos;
+}
+
+/** Build dimension chains between consecutive enabled walls. End dimensions are
+ *  measured to the outermost wall faces; each dim carries a `cross` coordinate
+ *  marking where it sits *inside* the plan for the optional interior dimensions. */
 export function buildDimensions(hWalls, vWalls) {
   const h = hWalls.filter((w) => w.enabled).sort((a, b) => a.pos - b.pos);
   const v = vWalls.filter((w) => w.enabled).sort((a, b) => a.pos - b.pos);
   const dims = [];
 
-  // vertical dims (gaps between horizontal walls) — outer chain down the left;
-  // interior line at the mid-x of where the two walls overlap.
+  // vertical dims (gaps between horizontal walls) — outer chain down the left.
   for (let i = 0; i + 1 < h.length; i++) {
-    dims.push({
-      axis: 'v', from: h[i].pos, to: h[i + 1].pos, units: h[i + 1].pos - h[i].pos,
-      cross: overlapMid(h[i].min, h[i].max, h[i + 1].min, h[i + 1].max),
-    });
+    const from = boundary(h, i);
+    const to = boundary(h, i + 1);
+    dims.push({ axis: 'v', from, to, units: to - from, cross: overlapMid(h[i].min, h[i].max, h[i + 1].min, h[i + 1].max) });
   }
-  // horizontal dims (gaps between vertical walls) — outer chain across the top;
-  // interior line at the mid-y of where the two walls overlap.
+  // horizontal dims (gaps between vertical walls) — outer chain across the top.
   for (let i = 0; i + 1 < v.length; i++) {
-    dims.push({
-      axis: 'h', from: v[i].pos, to: v[i + 1].pos, units: v[i + 1].pos - v[i].pos,
-      cross: overlapMid(v[i].min, v[i].max, v[i + 1].min, v[i + 1].max),
-    });
+    const from = boundary(v, i);
+    const to = boundary(v, i + 1);
+    dims.push({ axis: 'h', from, to, units: to - from, cross: overlapMid(v[i].min, v[i].max, v[i + 1].min, v[i + 1].max) });
   }
   return dims;
 }

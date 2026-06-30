@@ -1,15 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=Architects+Daughter&family=Inter:wght@400;500;600;700&display=swap');
+
 :root {
-  --bp-bg: #0a2540;
-  --bp-bg-deep: #061a2e;
-  --bp-line: #1d4e7a;
-  --bp-line-soft: #15395c;
-  --bp-ink: #cfe6ff;
-  --bp-accent: #2ea3ff;
-  --bp-accent-soft: #66c0ff;
-  --bp-warn: #ff5d73;
-  --bp-grid: rgba(110, 170, 230, 0.10);
-  font-family: 'Consolas', 'SF Mono', 'Roboto Mono', ui-monospace, monospace;
-  color-scheme: dark;
+  /* Blueprint + riso-blue + grid-paper palette */
+  --paper: #e9eefb;          /* blueprint graph paper */
+  --paper-card: #ffffff;     /* white "sheet" (panel cards, inputs) */
+  --sheet: #ffffff;          /* the drawing visualiser — always solid white */
+  --grid: rgba(33, 73, 156, 0.12);
+  --grid-strong: rgba(33, 73, 156, 0.22);
+  --blue: #1b3fb0;           /* deep blueprint / riso blue */
+  --blue-bright: #2f6bd8;
+  --blue-deep: #122a78;
+  --ink: #16245e;            /* dark blue ink */
+  --ink-soft: #45579e;
+  --line: #9fb4e6;           /* blue hairline */
+  --warn: #c0392b;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 9999px;
+
+  --hand: 'Architects Daughter', 'Comic Sans MS', cursive;
+
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- dark mode ---- */
+/* Inverts the UI chrome and the graph-paper backdrop. The drawing visualiser
+   keeps its own solid-white sheet via the separate --sheet token. */
+:root[data-theme='dark'] {
+  --paper: #0d1426;          /* dark graph-paper backdrop */
+  --paper-card: #16203b;     /* dark panel cards & inputs */
+  --sheet: #ffffff;          /* visualiser stays white */
+  --grid: rgba(120, 158, 255, 0.10);
+  --grid-strong: rgba(120, 158, 255, 0.20);
+  --blue: #5b82f0;           /* brighter accent for contrast on dark */
+  --blue-bright: #7aa0ff;
+  --blue-deep: #34467f;
+  --ink: #dfe7ff;            /* light ink */
+  --ink-soft: #93a4d8;
+  --line: #34467a;
+  --warn: #e05a4c;
+  color: var(--ink);
 }
 
 * { box-sizing: border-box; }
@@ -20,7 +54,14 @@ html, body, #root {
   width: 100%;
 }
 
+/* graph-paper background: fine grid + heavier major grid */
 body {
-  background: var(--bp-bg-deep);
-  color: var(--bp-ink);
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+    linear-gradient(var(--grid-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-strong) 1px, transparent 1px);
+  background-size: 22px 22px, 22px 22px, 110px 110px, 110px 110px;
+  color: var(--ink);
 }

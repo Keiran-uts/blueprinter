@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
-import { parseSvg, extractSegments, detectWalls, buildDimensions } from './lib/geometry';
+import { parseSvg, extractSegments, detectWalls, buildDimensions, physicalSizeMM } from './lib/geometry';
 import { exportAnnotatedSvg } from './lib/exportSvg';
 import PlanViewer from './components/PlanViewer';
 import NorthCompass from './components/NorthCompass';
@@ -11,12 +11,26 @@ const UNITS = ['mm', 'cm', 'm'];
 const PAPER = { A4: [210, 297], A3: [297, 420], A2: [420, 594], A1: [594, 841], A0: [841, 1189] };
 const PAPER_SIZES = ['A4', 'A3', 'A2', 'A1', 'A0'];
 
+// Match a physical size (mm) to a standard ISO A-size, orientation-independent.
+function matchPaperSize(w, h) {
+  const lo = Math.min(w, h);
+  const hi = Math.max(w, h);
+  const tol = Math.max(3, hi * 0.01); // a few mm of slack for rounding
+  for (const name of PAPER_SIZES) {
+    const [s, l] = PAPER[name];
+    if (Math.abs(lo - s) <= tol && Math.abs(hi - l) <= tol) return name;
+  }
+  return null;
+}
+
 export default function App() {
   const fileRef = useRef(null);
+  const logoRef = useRef(null);
   const [fileName, setFileName] = useState('');
   const [plan, setPlan] = useState(null); // { svg, box, innerHTML }
   const [scaleIdx, setScaleIdx] = useState(1); // default 1:50
   const [paperSize, setPaperSize] = useState('A1');
+  const [paperOverride, setPaperOverride] = useState(false); // user picked an A-size manually
   const [unit, setUnit] = useState('mm');
   const [calib, setCalib] = useState(null); // mm-per-unit override from Calibrate, or null
   const [hWalls, setHWalls] = useState([]);
@@ -29,37 +43,71 @@ export default function App() {
   const [calibInput, setCalibInput] = useState('1800');
   const [northAngle, setNorthAngle] = useState(0);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const [exportFmt, setExportFmt] = useState('svg'); // 'svg' | 'pdf'
+  const [exporting, setExporting] = useState(false);
+  const [dark, setDark] = useState(false);
+
+  // Drag offsets (SVG units) for the repositionable annotations.
+  const [offsets, setOffsets] = useState({
+    north: { dx: 0, dy: 0 },
+    scaleBar: { dx: 0, dy: 0 },
+    titleBlock: { dx: 0, dy: 0 },
+  });
+  const moveAnnotation = (key, off) => setOffsets((o) => ({ ...o, [key]: off }));
+
+  // Drive the UI theme from the <html data-theme> attribute so the body
+  // graph-paper backdrop (outside the React tree) inverts too.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  }, [dark]);
 
   // Title-block fields
   const [titleText, setTitleText] = useState('');
   const [address, setAddress] = useState('');
   const [drawnBy, setDrawnBy] = useState('');
+  const [logo, setLogo] = useState(null); // data URL of the brand logo
+  const [logoName, setLogoName] = useState('');
   const [drawingDate, setDrawingDate] = useState(() => new Date().toISOString().slice(0, 10));
+
+  const dims = useMemo(() => buildDimensions(hWalls, vWalls), [hWalls, vWalls]);
+
+  // Physical page size read from the file itself (exact), if it declares one.
+  const detectedMM = useMemo(() => (plan ? physicalSizeMM(plan.svg) : null), [plan]);
+  // The page size actually used to scale: the file's own size unless the user
+  // has overridden it with a manual A-size choice (or the file declares none).
+  const usingDetected = detectedMM != null && !paperOverride;
+  const detectedPaperName = detectedMM ? matchPaperSize(detectedMM.w, detectedMM.h) : null;
+  const pageLongMM = usingDetected
+    ? Math.max(detectedMM.w, detectedMM.h)
+    : Math.max(...PAPER[paperSize]);
+  const sheetLabel = usingDetected
+    ? (detectedPaperName || `${Math.round(detectedMM.w)}×${Math.round(detectedMM.h)}`)
+    : paperSize;
 
   const titleBlock = useMemo(() => ({
     title: titleText,
     address,
     scale: `1:${SCALES[scaleIdx]}`,
-    sheet: paperSize,
+    sheet: sheetLabel,
     units: unit,
     date: drawingDate,
     drawnBy,
-  }), [titleText, address, scaleIdx, paperSize, unit, drawingDate, drawnBy]);
+    logo,
+  }), [titleText, address, scaleIdx, sheetLabel, unit, drawingDate, drawnBy, logo]);
 
-  const dims = useMemo(() => buildDimensions(hWalls, vWalls), [hWalls, vWalls]);
-
-  // Real-world millimetres per SVG unit. A manual calibration wins; otherwise it
-  // is derived from the page size (how big the sheet is) and the drawing scale.
+  // Real-world millimetres per SVG unit. A manual calibration wins; otherwise:
+  //   real mm = (units mapped to physical page mm) × scale denominator
+  // e.g. at 1:20, one page-mm reads as 20 real mm.
   const mmPerUnit = useMemo(() => {
     if (calib != null) return calib;
     const denom = SCALES[scaleIdx];
     if (plan) {
       const svgLong = Math.max(plan.box.w, plan.box.h);
-      const pageLong = Math.max(...PAPER[paperSize]);
-      if (svgLong > 0) return (pageLong / svgLong) * denom;
+      if (svgLong > 0) return (pageLongMM / svgLong) * denom;
     }
     return denom;
-  }, [calib, scaleIdx, paperSize, plan]);
+  }, [calib, scaleIdx, pageLongMM, plan]);
 
   const loadSvgText = (text, name) => {
     setError('');
@@ -72,6 +120,7 @@ export default function App() {
       setManual([]);
       setMode('confirm');
       setCalib(null);
+      setPaperOverride(false);
     } catch (e) {
       setError(e.message || 'Could not read that SVG.');
       setPlan(null);
@@ -79,7 +128,22 @@ export default function App() {
   };
 
   const loadFile = async (file) => {
-    loadSvgText(await file.text(), file.name);
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    if (!isPdf) {
+      loadSvgText(await file.text(), file.name);
+      return;
+    }
+    setError('');
+    setBusy('Reading PDF…');
+    try {
+      const { pdfToSvgText } = await import('./lib/pdf');
+      const svgText = await pdfToSvgText(file);
+      loadSvgText(svgText, file.name);
+    } catch (e) {
+      setError(e.message || 'Could not read that PDF.');
+    } finally {
+      setBusy('');
+    }
   };
 
   const loadExample = async () => {
@@ -95,6 +159,50 @@ export default function App() {
   const onPick = (e) => {
     const f = e.target.files?.[0];
     if (f) loadFile(f);
+  };
+
+  // Load a brand logo (image or PDF) into the title block as a data URL.
+  const loadLogo = async (file) => {
+    try {
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+      if (isPdf) {
+        const { pdfToPngDataUrl } = await import('./lib/pdf');
+        setLogo(await pdfToPngDataUrl(file));
+      } else {
+        const url = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = rej;
+          r.readAsDataURL(file);
+        });
+        setLogo(url);
+      }
+      setLogoName(file.name);
+    } catch (e) {
+      setError(e.message || 'Could not load that logo.');
+    }
+  };
+
+  const onPickLogo = (e) => {
+    const f = e.target.files?.[0];
+    if (f) loadLogo(f);
+  };
+
+  const loadExampleLogo = async () => {
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}example-logo.png`);
+      const blob = await res.blob();
+      const url = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(blob);
+      });
+      setLogo(url);
+      setLogoName('example-logo.png');
+    } catch (e) {
+      setError(e.message || 'Could not load the example logo.');
+    }
   };
 
   const runDetect = () => {
@@ -142,17 +250,34 @@ export default function App() {
     setMode('measure');
   };
 
-  const download = () => {
+  const download = async () => {
     if (!plan) return;
-    const xml = exportAnnotatedSvg({
+    const params = {
       svg: plan.svg, box: plan.box, dims, manual, mmPerUnit,
-      north: { angle: northAngle }, titleBlock, showInterior, unit,
-    });
+      north: { angle: northAngle }, titleBlock, showInterior, unit, offsets,
+    };
+    const base = fileName.replace(/\.(svg|pdf)$/i, '') + '-dimensioned';
+
+    if (exportFmt === 'pdf') {
+      setExporting(true);
+      setError('');
+      try {
+        const { exportAnnotatedPdf } = await import('./lib/exportPdf');
+        await exportAnnotatedPdf(params, base);
+      } catch (e) {
+        setError(e.message || 'PDF export failed.');
+      } finally {
+        setExporting(false);
+      }
+      return;
+    }
+
+    const xml = exportAnnotatedSvg(params);
     const blob = new Blob([xml], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = fileName.replace(/\.svg$/i, '') + '-dimensioned.svg';
+    a.download = base + '.svg';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -165,24 +290,36 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark">⊹</span> BLUEPRINTER
         </div>
-        <div className="tagline">SVG PLAN · DIMENSION READER</div>
+        <div className="topbar-right">
+          <div className="tagline">SVG PLAN · DIMENSION READER</div>
+          <button
+            className="theme-toggle"
+            onClick={() => setDark((d) => !d)}
+            aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={dark ? 'Light mode' : 'Dark mode'}
+          >
+            {dark ? '☀' : '☾'}
+          </button>
+        </div>
       </header>
 
       <div className="layout">
         <aside className="panel">
-          <input ref={fileRef} type="file" accept=".svg,image/svg+xml" hidden onChange={onPick} />
+          <input ref={fileRef} type="file" accept=".svg,.pdf,image/svg+xml,application/pdf" hidden onChange={onPick} />
 
           <section className="step">
             <h3>1 · Add drawing</h3>
             <div className="add-row">
               <button className="btn primary" onClick={() => fileRef.current?.click()}>
-                + Add SVG file
+                Add file
               </button>
               <button className="btn" onClick={loadExample}>
                 Input example SVG file
               </button>
             </div>
-            {fileName && <div className="filename">{fileName}</div>}
+            <p className="hint">Open an SVG or PDF floor plan. Export as either.</p>
+            {busy && <div className="filename busy">{busy}</div>}
+            {fileName && !busy && <div className="filename">{fileName}</div>}
           </section>
 
           <section className="step">
@@ -199,11 +336,25 @@ export default function App() {
             <label className="field-label">Page size</label>
             <div className="paper-row">
               {PAPER_SIZES.map((p) => (
-                <button key={p} className={p === paperSize ? 'on' : ''} onClick={() => setPaperSize(p)}>
+                <button
+                  key={p}
+                  className={(usingDetected ? p === detectedPaperName : p === paperSize) ? 'on' : ''}
+                  onClick={() => { setPaperSize(p); setPaperOverride(true); }}
+                >
                   {p}
                 </button>
               ))}
             </div>
+            <p className="hint">
+              {usingDetected
+                ? `Auto-detected ${detectedPaperName ? `${detectedPaperName} ` : ''}from file: ${Math.round(detectedMM.w)} × ${Math.round(detectedMM.h)} mm`
+                : detectedMM
+                  ? `Overridden — using ${paperSize}. `
+                  : 'No page size in file — pick the sheet it was drawn on.'}
+              {detectedMM && paperOverride && (
+                <button className="btn ghost sm" onClick={() => setPaperOverride(false)}>Use file size</button>
+              )}
+            </p>
             <label className="field-label">Display units</label>
             <div className="paper-row">
               {UNITS.map((u) => (
@@ -284,6 +435,19 @@ export default function App() {
             <label className="field-label">Title</label>
             <input className="text-input" value={titleText} placeholder="e.g. Upper Floor Plan"
               onChange={(e) => setTitleText(e.target.value)} />
+            <input ref={logoRef} type="file" accept="image/*,.pdf,.svg" hidden onChange={onPickLogo} />
+            <label className="field-label">Logo</label>
+            <div className="paper-row">
+              <button onClick={() => logoRef.current?.click()}>Add a logo</button>
+              <button onClick={loadExampleLogo}>Input example logo</button>
+            </div>
+            {logo && (
+              <div className="logo-preview">
+                <img src={logo} alt="logo" />
+                <span>{logoName}</span>
+                <button className="btn ghost sm" onClick={() => { setLogo(null); setLogoName(''); }}>Remove</button>
+              </div>
+            )}
             <label className="field-label">Address</label>
             <input className="text-input" value={address} placeholder="e.g. 12 Example St, Sydney"
               onChange={(e) => setAddress(e.target.value)} />
@@ -295,7 +459,7 @@ export default function App() {
               onChange={(e) => setDrawingDate(e.target.value)} />
             <div className="tb-auto">
               <span>Scale <b>1:{SCALES[scaleIdx]}</b></span>
-              <span>Sheet <b>{paperSize}</b></span>
+              <span>Sheet <b>{sheetLabel}</b></span>
               <span>Units <b>{unit}</b></span>
             </div>
             <p className="hint">Scale &amp; sheet update automatically from step 2.</p>
@@ -303,8 +467,16 @@ export default function App() {
 
           <section className="step">
             <h3>6 · Export</h3>
-            <button className="btn primary" disabled={!plan} onClick={download}>
-              ↓ Save dimensioned SVG
+            <label className="field-label">Format</label>
+            <div className="paper-row">
+              {['svg', 'pdf'].map((f) => (
+                <button key={f} className={f === exportFmt ? 'on' : ''} onClick={() => setExportFmt(f)}>
+                  {f.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <button className="btn primary export-btn" disabled={!plan || exporting} onClick={download}>
+              {exporting ? 'Generating PDF…' : `↓ Save dimensioned ${exportFmt.toUpperCase()}`}
             </button>
           </section>
         </aside>
@@ -327,6 +499,8 @@ export default function App() {
                 titleBlock={titleBlock}
                 showInterior={showInterior}
                 unit={unit}
+                offsets={offsets}
+                onMoveAnnotation={moveAnnotation}
                 onToggleWall={toggleWall}
                 onAddManual={addManual}
               />

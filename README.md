@@ -6,8 +6,9 @@ scale you choose. Built with **Vite + React**.
 
 ## Workflow
 
-1. **Add SVG file** — pick an SVG floor plan from your computer, or click
-   **Input example SVG file** to load the bundled example plan.
+1. **Add SVG file** — pick an SVG *or PDF* floor plan from your computer (PDFs
+   are converted to vector SVG automatically via pdf.js), or click **Input
+   example SVG file** to load the bundled example plan.
 2. **Plan scale** — choose 1:20 / 1:50 / 1:100 / 1:200 / 1:500 on the slider,
    or hit **Calibrate** and draw a line over a known dimension to set the exact
    real-world scale.
